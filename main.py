@@ -16,13 +16,19 @@ class AudioProcessorGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("音频处理与语音识别系统")
-        self.root.geometry("900x900")
+        self.root.geometry("1000x900")
 
         # 设置窗口样式
         self.style = ttk.Style()
-        self.style.configure("Title.TLabel", font=("Microsoft YaHei UI", 16, "bold"))
-        self.style.configure("Subtitle.TLabel", font=("Microsoft YaHei UI", 12))
-        self.style.configure("Action.TButton", font=("Microsoft YaHei UI", 10))
+        self.style.configure(
+            "Title.TLabel", font=("Microsoft YaHei UI", 24, "bold")
+        )  # 增大标题字体
+        self.style.configure(
+            "Subtitle.TLabel", font=("Microsoft YaHei UI", 14)
+        )  # 增大子标题字体
+        self.style.configure(
+            "Action.TButton", font=("Microsoft YaHei UI", 12)
+        )  # 增大按钮字体
 
         # 设置主题色
         self.root.configure(bg="#f0f0f0")
@@ -101,11 +107,17 @@ class AudioProcessorGUI:
 
         # 设置文本框样式
         text_style = {
-            "font": ("Microsoft YaHei UI", 10),
+            "font": ("Microsoft YaHei UI", 12),  # 增大文本框字体
             "wrap": tk.WORD,
-            "padx": 5,
-            "pady": 5,
+            "padx": 8,
+            "pady": 8,
         }
+
+        # 更新Entry控件字体
+        entry_style = {"font": ("Microsoft YaHei UI", 12)}  # 增大输入框字体
+        ttk.Entry(
+            control_frame, textvariable=self.input_path_var, width=60, **entry_style
+        ).grid(row=0, column=1, padx=5)
 
         # 原始音频结果
         ttk.Label(result_frame, text="原始音频识别:", style="Subtitle.TLabel").grid(
