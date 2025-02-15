@@ -3,3 +3,4 @@ numpy>=1.24.0
 soundfile>=0.12.1
 SpeechRecognition>=3.10.0
 PyQt6>=6.5.2
+openai-whisper>=20231117

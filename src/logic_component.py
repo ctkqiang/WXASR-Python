@@ -1,6 +1,8 @@
-import librosa
-import numpy as np
 import os
+import whisper
+import librosa
+import time
+import numpy as np
 import soundfile as sf
 import speech_recognition as sr
 from typing import Optional, Union, Tuple
@@ -8,7 +10,13 @@ from typing import Optional, Union, Tuple
 
 class WX_ASR:
     def __init__(self) -> None:
-        self.recognizer = sr.Recognizer()
+        self.language: str = "zh-CN"
+        self.recognizer: sr.Recognizer = sr.Recognizer()
+        """
+        模型选择：Whisper提供多种模型（base基础型、small、medium、large）。
+        较大的模型提供更高的准确性，但需要更多的计算资源。
+        """
+        self.model: whisper.Whisper = whisper.load_model("base")
 
     @staticmethod
     def modify_audio(
@@ -55,31 +63,18 @@ class WX_ASR:
         except Exception as e:
             raise ValueError(f"处理音频文件时出错: {str(e)}")
 
-    def ASR_Tester(self, file_path) -> str:
-        with sr.AudioFile(file_path) as source:
-            audio_data = self.recognizer.record(source)
-
-            try:
-                text = self.recognizer.recognize_google(audio_data, language="zh-CN")
-                return text
-            except sr.UnknownValueError:
-                print("Google Speech Recognition could not understand audio")
-            except sr.RequestError as e:
-                print(
-                    f"Could not request results from Google Speech Recognition service; {e}"
-                )
-
-        return ""
+    def ASR_Tester(self, file_path: str) -> str:
+        try:
+            result = self.model.transcribe(file_path, language=self.language)
+            return result["text"]
+        except Exception as e:
+            print(f"[x] 语音识别转录失败: {e}")
+            return str(e)
+        return None
 
 
+# TODO  remove
 if __name__ == "__main__":
-    try:
-        modified_audio, sr = WX_ASR.modify_audio(
-            "./media/test_data/test.wav",
-            "./media/output/modified_audio.wav",
-            noise_level=0.003,
-            volume_gain=1.2,
-        )
-        print(f"Audio successfully modified and saved with sample rate: {sr}Hz")
-    except Exception as e:
-        print(f"Error: {str(e)}")
+    wx = WX_ASR()
+    o = wx.ASR_Tester(file_path="../media/test_data/test.wav")
+    print(o)
