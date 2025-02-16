@@ -11,6 +11,8 @@ from funasr import AutoModel
 from typing import Optional, Union, Tuple
 from deprecated import deprecated
 
+isTesting: bool = True
+
 
 class WX_ASR:
     def __init__(self) -> None:
@@ -29,38 +31,31 @@ class WX_ASR:
     def modify_audio(
         file_path: str,
         output_path: str,
-        noise_level: float = 0.05,  # 5% noise
-        volume_gain: float = 0.5,  # 50% volume
+        noise_level: float = 0.05,
+        volume_gain: float = 0.5,
     ) -> Tuple[np.ndarray, int]:
-        """
-        修改音频文件，添加噪声并调整音量。
-        参数:
-            file_path (str): 输入音频文件路径
-            output_path (str): 保存修改后音频的路径
-            noise_level (float): 要添加的噪声量 (默认: 0.05)
-            volume_gain (float): 音量调整系数 (默认: 0.5)
-        """
         try:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"[x] 未找到音频文件：{file_path}")
 
             audio, sr = librosa.load(file_path, sr=None)
 
-            # 添加固定模式的噪声
-            noise_pattern = (
-                np.sin(np.linspace(0, 100 * np.pi, len(audio))) * noise_level
-            )
-            audio = audio + noise_pattern
+            # 添加高频噪声 (超出人耳范围但影响ASR)
+            t = np.linspace(0, len(audio) / sr, len(audio))
+            high_freq_noise = np.sin(2 * np.pi * 18000 * t) * 0.1
+            audio = audio + high_freq_noise
+
+            # 添加微小时间偏移
+            shift_samples = int(sr * 0.001)  # 1ms shift
+            audio = np.roll(audio, shift_samples)
 
             # 应用音量增益
             audio = audio * volume_gain
 
-            # 固定间隔降低音量
-            interval = int(sr * 0.5)  # 每0.5秒
-            segment_length = int(sr * 0.05)  # 50ms片段
-            for i in range(0, len(audio), interval):
-                if i + segment_length < len(audio):
-                    audio[i : i + segment_length] *= 0.7  # 降低30%音量
+            # 添加选择性频率调制
+            mod_freq = 50  # 50Hz modulation
+            modulation = 1 + 0.1 * np.sin(2 * np.pi * mod_freq * t)
+            audio = audio * modulation
 
             # 限制在有效范围内
             modified_audio = np.clip(audio, -1.0, 1.0)
@@ -100,16 +95,56 @@ class WX_ASR:
             return str(e)
         return None
 
-    def compare_transcriptions(self, transcription_file: str) -> dict:
+    def calculate_repetition_rate(self, text: str) -> dict:
         """
-        将转录文本与原始参考文本进行比较
-
+        计算文本中的重复率
         参数:
-            transcription_file (str): 需要比较的转录文本文件路径
-
+            text (str): 需要分析的文本
         返回:
-            dict: 包含比较结果的字典
+            dict: 包含重复率分析结果的字典
         """
+        try:
+            # 分词处理
+            words = text.split()
+            total_words = len(words)
+
+            # 统计词频
+            word_freq = {}
+            for word in words:
+                word_freq[word] = word_freq.get(word, 0) + 1
+
+            # 计算重复词数量
+            repeated_words = sum(count - 1 for count in word_freq.values() if count > 1)
+
+            # 计算重复率
+            repetition_rate = (
+                (repeated_words / total_words * 100) if total_words > 0 else 0
+            )
+
+            # 找出重复次数最多的词
+            most_repeated = sorted(
+                [(word, count) for word, count in word_freq.items() if count > 1],
+                key=lambda x: x[1],
+                reverse=True,
+            )[
+                :5
+            ]  # 只显示前5个
+
+            return {
+                "重复率分析": {
+                    "总字数": total_words,
+                    "重复字数": repeated_words,
+                    "重复率": f"{repetition_rate:.2f}%",
+                    "高频重复词": [
+                        {"词": word, "出现次数": count} for word, count in most_repeated
+                    ],
+                }
+            }
+
+        except Exception as e:
+            return {"错误": f"计算重复率时出错: {str(e)}"}
+
+    def compare_transcriptions(self, transcription_file: str) -> dict:
         try:
             # 获取原始参考文本路径
             original_file = (
@@ -134,6 +169,10 @@ class WX_ASR:
                 same_chars = sum(1 for a, b in zip(original_text, test_text) if a == b)
                 similarity = (same_chars / total_chars) * 100
 
+            # 添加重复率分析
+            original_repetition = self.calculate_repetition_rate(original_text)
+            test_repetition = self.calculate_repetition_rate(test_text)
+
             return {
                 "比较结果": {
                     "相似度分析": {
@@ -146,6 +185,10 @@ class WX_ASR:
                         "测试文本长度": len(test_text),
                         "长度差异": abs(len(original_text) - len(test_text)),
                     },
+                    "重复率分析": {
+                        "原始文本": original_repetition["重复率分析"],
+                        "测试文本": test_repetition["重复率分析"],
+                    },
                     "文本内容": {
                         "原始文本": original_text,
                         "测试文本": test_text,
@@ -153,9 +196,6 @@ class WX_ASR:
                 }
             }
 
-        except FileNotFoundError as e:
-            print(f"[x] 找不到文件: {str(e)}")
-            return {"错误": f"找不到文件: {str(e)}"}
         except Exception as e:
             print(f"[x] 比较文件时出错: {str(e)}")
             return {"错误": f"比较文件时出错: {str(e)}"}
@@ -182,6 +222,16 @@ class WX_ASR:
         print("\n【文本内容】")
         print(f"├─ 原始文本: {comparison['文本内容']['原始文本']}")
         print(f"└─ 测试文本: {comparison['文本内容']['测试文本']}")
+        print("\n【重复率分析】")
+        print("├─ 原始文本:")
+        print(f"│  ├─ 重复率: {comparison['重复率分析']['原始文本']['重复率']}")
+        print(f"│  ├─ 总字数: {comparison['重复率分析']['原始文本']['总字数']}")
+        print(f"│  └─ 重复字数: {comparison['重复率分析']['原始文本']['重复字数']}")
+        print("└─ 测试文本:")
+        print(f"   ├─ 重复率: {comparison['重复率分析']['测试文本']['重复率']}")
+        print(f"   ├─ 总字数: {comparison['重复率分析']['测试文本']['总字数']}")
+        print(f"   └─ 重复字数: {comparison['重复率分析']['测试文本']['重复字数']}")
+
         print("\n===================\n")
 
     @deprecated("由于未知原因导致的多个错误，此方法已弃用，请使用 ASR_Tester 方法代替")
@@ -195,66 +245,114 @@ class WX_ASR:
         except Exception as e:
             raise ValueError(f"[x] 转录过程中出错：{str(e)}")
 
+    def get_subtitle_repetition_rate(self, transcription_file: str):
+        """
+        获取字幕重复率
+
+        参数:
+            transcription_file (str): 需要比较的转录文本文件路径
+
+        返回:
+            str: 字幕重复率，以百分比形式呈现
+        """
+        result = self.compare_transcriptions(transcription_file)
+        if "错误" in result:
+            return f"Error: {result['错误']}"
+        return result["比较结果"]["相似度分析"]["百分比"]
+
 
 if __name__ == "__main__":
-    try:
-        ROOT_DIR = Path(__file__).parent.parent
-        test_audio = ROOT_DIR / "media" / "test_data" / "test.wav"  # TODO 改
-
-        wx = WX_ASR()
-
-        # 测试1：测试音频修改功能
-        print("\n=== 音频修改测试 ===")
+    if isTesting:
         try:
-            # Create output directory if it doesn't exist
-            output_dir = ROOT_DIR / "media" / "output"
-            output_dir.mkdir(parents=True, exist_ok=True)
+            ROOT_DIR = Path(__file__).parent.parent
+            test_audio = ROOT_DIR / "media" / "test_data" / "test.wav"
 
-            modified_audio_path = output_dir / f"modified_audio.wav"
-            modified_audio, sr = wx.modify_audio(
-                file_path=str(test_audio),
-                output_path=str(modified_audio_path),
-                noise_level=0.02,
-                volume_gain=0.8,
-            )
-            print(f"[√] 音频已修改并保存至: {modified_audio_path}")
-            print(f"[√] 采样率: {sr}")
-            print(f"[√] 修改后音频形状: {modified_audio.shape}")
+            wx = WX_ASR()
+
+            # 测试[1]：测试音频修改功能
+            print("\n=== 音频修改测试 ===")
+            try:
+                # Create output directory if it doesn't exist
+                output_dir = ROOT_DIR / "media" / "output"
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                modified_audio_path = output_dir / f"modified_audio_20250216_170115.wav"
+                modified_audio, sr = wx.modify_audio(
+                    file_path=str(test_audio),
+                    output_path=str(modified_audio_path),
+                    noise_level=0.02,
+                    volume_gain=0.8,
+                )
+                print(f"[√] 音频已修改并保存至: {modified_audio_path}")
+                print(f"[√] 采样率: {sr}")
+                print(f"[√] 修改后音频形状: {modified_audio.shape}")
+            except Exception as e:
+                print(f"[x] 音频修改失败: {e}")
+
+            # 测试[2]：测试语音识别和字幕重复率分析
+            print("\n=== 语音识别测试 ===")
+            try:
+                # 测试原始音频转录
+                print("\n转录原始音频:")
+                original_text = wx.ASR_Tester(str(test_audio))
+                print(f"[√] 原始音频转录结果: {original_text}")
+
+                # 分析原始音频字幕重复率
+                original_repetition = wx.calculate_repetition_rate(original_text)
+                print("\n原始音频字幕重复率分析:")
+                print(f"├─ 总字数: {original_repetition['重复率分析']['总字数']}")
+                print(f"├─ 重复字数: {original_repetition['重复率分析']['重复字数']}")
+                print(f"└─ 重复率: {original_repetition['重复率分析']['重复率']}")
+
+                # 测试修改后的音频转录
+                print("\n转录修改后的音频:")
+                modified_text = wx.ASR_Tester(str(modified_audio_path))
+                print(f"[√] 修改后音频转录结果: {modified_text}")
+
+                # 分析修改后音频字幕重复率
+                modified_repetition = wx.calculate_repetition_rate(modified_text)
+                print("\n修改后音频字幕重复率分析:")
+                print(f"├─ 总字数: {modified_repetition['重复率分析']['总字数']}")
+                print(f"├─ 重复字数: {modified_repetition['重复率分析']['重复字数']}")
+                print(f"└─ 重复率: {modified_repetition['重复率分析']['重复率']}")
+
+                # 保存转录结果以供比较
+                transcribe_dir = ROOT_DIR / "media" / "transcribe"
+                transcribe_dir.mkdir(parents=True, exist_ok=True)
+
+                with open(
+                    transcribe_dir / "original_transcription.txt", "w", encoding="utf-8"
+                ) as f:
+                    f.write(original_text)
+                with open(
+                    transcribe_dir / "transcription.txt", "w", encoding="utf-8"
+                ) as f:
+                    f.write(modified_text)
+
+                # 比较转录结果
+                result = wx.compare_transcriptions(
+                    str(transcribe_dir / "transcription.txt")
+                )
+                wx.print_comparison(result)
+
+                repetition_rate = wx.get_subtitle_repetition_rate(
+                    str(transcribe_dir / "transcription.txt")
+                )
+
+                print("\n=== 字幕重复率总结 ===")
+                print(f"├─ 相似度: {repetition_rate}")
+                print(
+                    "└─ 状态: "
+                    + (
+                        "✓ 正常"
+                        if float(repetition_rate.strip("%")) > 80
+                        else "⚠️ 需要优化"
+                    )
+                )
+                print("=====================\n")
+            except Exception as e:
+                print(f"[x] {e}")
         except Exception as e:
-            print(f"[x] 音频修改失败: {e}")
-
-        # 测试2：测试语音识别
-        print("\n=== 语音识别测试 ===")
-        try:
-            # 测试原始音频
-            print("\n转录原始音频:")
-            original_text = wx.ASR_Tester(str(test_audio))
-            print(f"[√] 原始音频转录结果: {original_text}")
-
-            # 测试修改后的音频
-            print("\n转录修改后的音频:")
-            modified_text = wx.ASR_Tester(str(modified_audio_path))
-            print(f"[√] 修改后音频转录结果: {modified_text}")
-
-            # 保存转录结果以供比较
-            transcribe_dir = ROOT_DIR / "media" / "transcribe"
-            transcribe_dir.mkdir(parents=True, exist_ok=True)
-
-            with open(
-                transcribe_dir / "original_transcription.txt", "w", encoding="utf-8"
-            ) as f:
-                f.write(original_text)
-            with open(transcribe_dir / "transcription.txt", "w", encoding="utf-8") as f:
-                f.write(modified_text)
-
-            # 比较转录结果
-            result = wx.compare_transcriptions(
-                str(transcribe_dir / "transcription.txt")
-            )
-            wx.print_comparison(result)
-
-        except Exception as e:
-            print(f"[x] {e}")
-
-    except Exception as e:
-        print(f"[x] 错误: {str(e)}")
+            print(f"[x] 错误: {str(e)}")
+    else:
+        pass
