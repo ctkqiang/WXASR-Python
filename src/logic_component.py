@@ -1,17 +1,23 @@
 import os
+import time
+import random
 import whisper
 import librosa
-import time
 import numpy as np
 import soundfile as sf
 from pathlib import Path
 import speech_recognition as sr
+from funasr import AutoModel
 from typing import Optional, Union, Tuple
+from deprecated import deprecated
 
 
 class WX_ASR:
     def __init__(self) -> None:
         self.language: str = "zh"
+        self.funasr_model: str = (
+            "damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+        )
         self.recognizer: sr.Recognizer = sr.Recognizer()
         """
         模型选择：Whisper提供多种模型（base基础型、small、medium、large）。
@@ -23,38 +29,41 @@ class WX_ASR:
     def modify_audio(
         file_path: str,
         output_path: str,
-        noise_level: float = 0.005,
-        volume_gain: float = 1.0,
+        noise_level: float = 0.05,  # 5% noise
+        volume_gain: float = 0.5,  # 50% volume
     ) -> Tuple[np.ndarray, int]:
         """
         修改音频文件，添加噪声并调整音量。
-
         参数:
             file_path (str): 输入音频文件路径
             output_path (str): 保存修改后音频的路径
-            noise_level (float): 要添加的噪声量 (默认: 0.005)
-            volume_gain (float): 音量调整系数 (默认: 1.0)
-
-        返回:
-            Tuple[np.ndarray, int]: 修改后的音频数组和采样率
-
-        异常:
-            FileNotFoundError: 如果输入文件不存在
-            ValueError: 如果音频文件无法处理
+            noise_level (float): 要添加的噪声量 (默认: 0.05)
+            volume_gain (float): 音量调整系数 (默认: 0.5)
         """
         try:
-            # 加载音频文件
             if not os.path.exists(file_path):
-                raise FileNotFoundError(f"[x] 找不到音频文件: {file_path}")
+                raise FileNotFoundError(f"[x] 未找到音频文件：{file_path}")
 
             audio, sr = librosa.load(file_path, sr=None)
 
-            # 应用音频转换
-            noise = np.random.normal(0, noise_level, audio.shape)
-            modified_audio = (audio + noise) * volume_gain
+            # 添加固定模式的噪声
+            noise_pattern = (
+                np.sin(np.linspace(0, 100 * np.pi, len(audio))) * noise_level
+            )
+            audio = audio + noise_pattern
 
-            # 确保音频保持在有效范围内
-            modified_audio = np.clip(modified_audio, -1.0, 1.0)
+            # 应用音量增益
+            audio = audio * volume_gain
+
+            # 固定间隔降低音量
+            interval = int(sr * 0.5)  # 每0.5秒
+            segment_length = int(sr * 0.05)  # 50ms片段
+            for i in range(0, len(audio), interval):
+                if i + segment_length < len(audio):
+                    audio[i : i + segment_length] *= 0.7  # 降低30%音量
+
+            # 限制在有效范围内
+            modified_audio = np.clip(audio, -1.0, 1.0)
 
             # 保存修改后的音频
             sf.write(output_path, modified_audio, sr)
@@ -62,7 +71,7 @@ class WX_ASR:
             return modified_audio, sr
 
         except Exception as e:
-            raise ValueError(f"[x] 处理音频文件时出错: {str(e)}")
+            raise ValueError(f"[x] 处理音频文件时出错：{str(e)}")
 
     def ASR_Tester(self, file_path: str) -> str:
         try:
@@ -161,7 +170,9 @@ class WX_ASR:
         print("\n【相似度分析】")
         print(f"├─ 相似度: {comparison['相似度分析']['百分比']}")
         print(f"├─ 相同字符: {comparison['相似度分析']['相同字符数']}")
-        print(f"└─ 总字符数: {comparison['相似度分析']['s总字符数']}")
+        print(
+            f"└─ 总字符数: {comparison['相似度分析']['总字符数']}"
+        )  # Fixed: removed extra 's'
 
         print("\n【文本统计】")
         print(f"├─ 原始长度: {comparison['文本统计']['原始文本长度']}")
@@ -173,16 +184,77 @@ class WX_ASR:
         print(f"└─ 测试文本: {comparison['文本内容']['测试文本']}")
         print("\n===================\n")
 
+    @deprecated("由于未知原因导致的多个错误，此方法已弃用，请使用 ASR_Tester 方法代替")
+    def transcribe_audio_with_funasr(self, file_path: str) -> str:
+        try:
+            model = AutoModel(
+                disable_update=True, model=self.funasr_model, model_revision="v1.2.4"
+            )
+            result = model.transcribe(file_path)
+            return result["text"]
+        except Exception as e:
+            raise ValueError(f"[x] 转录过程中出错：{str(e)}")
 
-# 在主函数中使用:
+
 if __name__ == "__main__":
     try:
         ROOT_DIR = Path(__file__).parent.parent
-        out_file = ROOT_DIR / "media" / "transcribe" / "original_transcription.txt"
+        test_audio = ROOT_DIR / "media" / "test_data" / "test.wav"  # TODO 改
 
         wx = WX_ASR()
-        result = wx.compare_transcriptions(transcription_file=out_file)
-        wx.print_comparison(result)  # 使用新的打印方法
+
+        # 测试1：测试音频修改功能
+        print("\n=== 音频修改测试 ===")
+        try:
+            # Create output directory if it doesn't exist
+            output_dir = ROOT_DIR / "media" / "output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            modified_audio_path = output_dir / f"modified_audio.wav"
+            modified_audio, sr = wx.modify_audio(
+                file_path=str(test_audio),
+                output_path=str(modified_audio_path),
+                noise_level=0.02,
+                volume_gain=0.8,
+            )
+            print(f"[√] 音频已修改并保存至: {modified_audio_path}")
+            print(f"[√] 采样率: {sr}")
+            print(f"[√] 修改后音频形状: {modified_audio.shape}")
+        except Exception as e:
+            print(f"[x] 音频修改失败: {e}")
+
+        # 测试2：测试语音识别
+        print("\n=== 语音识别测试 ===")
+        try:
+            # 测试原始音频
+            print("\n转录原始音频:")
+            original_text = wx.ASR_Tester(str(test_audio))
+            print(f"[√] 原始音频转录结果: {original_text}")
+
+            # 测试修改后的音频
+            print("\n转录修改后的音频:")
+            modified_text = wx.ASR_Tester(str(modified_audio_path))
+            print(f"[√] 修改后音频转录结果: {modified_text}")
+
+            # 保存转录结果以供比较
+            transcribe_dir = ROOT_DIR / "media" / "transcribe"
+            transcribe_dir.mkdir(parents=True, exist_ok=True)
+
+            with open(
+                transcribe_dir / "original_transcription.txt", "w", encoding="utf-8"
+            ) as f:
+                f.write(original_text)
+            with open(transcribe_dir / "transcription.txt", "w", encoding="utf-8") as f:
+                f.write(modified_text)
+
+            # 比较转录结果
+            result = wx.compare_transcriptions(
+                str(transcribe_dir / "transcription.txt")
+            )
+            wx.print_comparison(result)
+
+        except Exception as e:
+            print(f"[x] {e}")
 
     except Exception as e:
         print(f"[x] 错误: {str(e)}")

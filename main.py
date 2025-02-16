@@ -14,31 +14,31 @@ from src.logic_component import WX_ASR
 
 class AudioProcessorGUI:
     def __init__(self):
+        """初始化GUI界面"""
+        # 创建主窗口
         self.root = tk.Tk()
         self.root.title("音频处理与语音识别系统")
-        self.root.geometry("1000x900")
+        self.root.geometry("1000x900")  # 设置窗口大小
 
         # 设置窗口样式
         self.style = ttk.Style()
-        self.style.configure(
-            "Title.TLabel", font=("Microsoft YaHei UI", 24, "bold")
-        )  # 增大标题字体
-        self.style.configure(
-            "Subtitle.TLabel", font=("Microsoft YaHei UI", 14)
-        )  # 增大子标题字体
-        self.style.configure(
-            "Action.TButton", font=("Microsoft YaHei UI", 12)
-        )  # 增大按钮字体
+        # 配置标题、副标题和按钮的字体样式
+        self.style.configure("Title.TLabel", font=("Microsoft YaHei UI", 24, "bold"))
+        self.style.configure("Subtitle.TLabel", font=("Microsoft YaHei UI", 14))
+        self.style.configure("Action.TButton", font=("Microsoft YaHei UI", 12))
 
         # 设置主题色
-        self.root.configure(bg="#f0f0f0")
+        self.root.configure(bg="#f0f0f0")  # 设置背景色
         self.style.configure("TFrame", background="#f0f0f0")
         self.style.configure("TLabelframe", background="#f0f0f0")
 
+        # 初始化语音识别模块
         self.wxasr = WX_ASR()
+        # 设置GUI组件
         self.setup_gui()
 
     def setup_gui(self):
+        """设置GUI界面组件"""
         # 创建主框架并添加内边距
         main_frame = ttk.Frame(self.root, padding="20")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
@@ -83,6 +83,11 @@ class AudioProcessorGUI:
         )
         self.noise_level.set(0.003)
         self.noise_level.grid(row=0, column=0, padx=5)
+        self.noise_label = ttk.Label(noise_frame, text="0.3%")
+        self.noise_label.grid(row=1, column=0)
+        self.noise_level.configure(
+            command=lambda v: self.noise_label.configure(text=f"{float(v)*100:.1f}%")
+        )
 
         # 音量控制
         volume_frame = ttk.LabelFrame(params_frame, text="音量增益", padding="5")
@@ -92,14 +97,31 @@ class AudioProcessorGUI:
         )
         self.volume_gain.set(1.2)
         self.volume_gain.grid(row=0, column=0, padx=5)
+        self.volume_label = ttk.Label(volume_frame, text="120%")
+        self.volume_label.grid(row=1, column=0)
+        self.volume_gain.configure(
+            command=lambda v: self.volume_label.configure(text=f"{float(v)*100:.1f}%")
+        )
+
+        # 按钮框架
+        button_frame = ttk.Frame(control_frame)
+        button_frame.grid(row=2, column=0, columnspan=3, pady=10)
 
         # 处理按钮
         ttk.Button(
-            control_frame,
+            button_frame,
             text="处理音频",
             style="Action.TButton",
             command=self.process_audio,
-        ).grid(row=2, column=0, columnspan=3, pady=10)
+        ).grid(row=0, column=0, padx=10)
+
+        # 重置按钮
+        ttk.Button(
+            button_frame,
+            text="重置",
+            style="Action.TButton",
+            command=self.reset_all,
+        ).grid(row=0, column=1, padx=10)
 
         # 结果显示区域
         result_frame = ttk.LabelFrame(main_frame, text="识别结果", padding="15")
@@ -107,7 +129,7 @@ class AudioProcessorGUI:
 
         # 设置文本框样式
         text_style = {
-            "font": ("Microsoft YaHei UI", 12),  # 增大文本框字体
+            "font": ("Microsoft YaHei UI", 12),
             "wrap": tk.WORD,
             "padx": 8,
             "pady": 8,
@@ -244,6 +266,22 @@ class AudioProcessorGUI:
         self.comparison_text.insert(
             tk.END, f"└─ 长度差异: {comparison['文本统计']['长度差异']}\n"
         )
+
+    def reset_all(self):
+        # Reset input file
+        self.input_path_var.set("")
+
+        # Reset sliders to default values
+        self.noise_level.set(0.05)  # 5%
+        self.volume_gain.set(0.5)  # 50%
+
+        # Clear all text areas
+        self.original_text.delete(1.0, tk.END)
+        self.modified_text.delete(1.0, tk.END)
+        self.comparison_text.delete(1.0, tk.END)
+
+        # Reset status
+        self.status_var.set("")
 
     def run(self):
         self.root.mainloop()
