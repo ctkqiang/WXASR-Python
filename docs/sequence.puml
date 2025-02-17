@@ -1,0 +1,52 @@
+@startuml WX_ASR Sequence
+
+skinparam backgroundColor #FFFFFF
+skinparam handwritten false
+skinparam defaultFontName Microsoft YaHei
+
+title 音频处理与语音识别系统 - 序列图
+
+actor User
+participant GUI
+participant WX_ASR
+participant "File System" as FS
+participant "Whisper Model" as Whisper
+
+== 初始化 ==
+GUI -> WX_ASR: 创建实例
+WX_ASR -> Whisper: 加载模型(base)
+
+== 文件处理 ==
+User -> GUI: 选择文件
+GUI -> FS: 检查文件类型和大小
+
+alt 视频文件
+    GUI -> WX_ASR: modify_video_audio()
+    WX_ASR -> FS: 提取音频
+    WX_ASR -> WX_ASR: modify_audio()
+    WX_ASR -> FS: 保存修改后的音频
+    WX_ASR -> FS: 合并视频和修改后的音频
+else 音频文件
+    GUI -> WX_ASR: modify_audio()
+    WX_ASR -> FS: 保存修改后的音频
+end
+
+== 语音识别 ==
+GUI -> WX_ASR: ASR_Tester(原始文件)
+WX_ASR -> Whisper: transcribe()
+Whisper --> WX_ASR: 返回转录文本
+WX_ASR -> FS: 保存原始转录文本
+
+GUI -> WX_ASR: ASR_Tester(修改后文件)
+WX_ASR -> Whisper: transcribe()
+Whisper --> WX_ASR: 返回转录文本
+WX_ASR -> FS: 保存修改后转录文本
+
+== 文本分析 ==
+GUI -> WX_ASR: compare_transcriptions()
+WX_ASR -> WX_ASR: calculate_repetition_rate()
+WX_ASR -> WX_ASR: calculate_semantic_similarity()
+WX_ASR --> GUI: 返回分析报告
+GUI -> User: 显示分析结果
+
+@enduml
