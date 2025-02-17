@@ -22,6 +22,7 @@ class AudioProcessorGUI:
 
         # 设置窗口样式
         self.style = ttk.Style()
+
         # 配置标题、副标题和按钮的字体样式
         self.style.configure("Title.TLabel", font=("Microsoft YaHei UI", 24, "bold"))
         self.style.configure("Subtitle.TLabel", font=("Microsoft YaHei UI", 14))
@@ -177,11 +178,74 @@ class AudioProcessorGUI:
 
     def select_input_file(self):
         file_path = filedialog.askopenfilename(
-            title="选择音频文件",
-            filetypes=[("WAV files", "*.wav"), ("All files", "*.*")],
+            title="选择音频/视频文件",
+            filetypes=[
+                (
+                    "所有支持的格式",
+                    "*.wav *.mp3 *.m4a *.aac *.ogg *.flac *.wma *.aiff *.mp4 *.avi *.mkv *.mov",
+                ),
+                ("视频文件", "*.mp4 *.avi *.mkv *.mov"),
+                ("音频文件", "*.wav *.mp3 *.m4a *.aac *.ogg *.flac *.wma *.aiff"),
+                ("所有文件", "*.*"),
+            ],
         )
         if file_path:
-            self.input_path_var.set(file_path)
+            # 检查文件是否存在
+            if not os.path.exists(file_path):
+                messagebox.showerror("错误", "所选文件不存在")
+                return
+
+            # 检查文件大小
+            file_size = os.path.getsize(file_path) / (1024 * 1024)  # 转换为MB
+            if file_size > 100:  # 限制100MB
+                messagebox.showerror("错误", "文件大小超过100MB，请选择更小的文件")
+                return
+
+            # 检查是否为视频文件
+            if file_path.lower().endswith((".mp4", ".avi", ".mkv", ".mov")):
+                try:
+                    self.status_var.set("[...] 正在处理视频...")
+
+                    # 创建临时和输出目录
+                    temp_dir = ROOT_DIR / "media" / "temp"
+                    output_dir = ROOT_DIR / "media" / "output"
+                    os.makedirs(temp_dir, exist_ok=True)
+                    os.makedirs(output_dir, exist_ok=True)
+
+                    # 生成临时音频文件路径
+                    temp_audio = temp_dir / f"temp_audio_{int(time.time())}.wav"
+
+                    # 提取音频
+                    import moviepy.editor as mp
+
+                    video = mp.VideoFileClip(file_path)
+                    video.audio.write_audiofile(str(temp_audio))
+                    video.close()
+
+                    # 修改音频
+                    modified_audio, sr = WX_ASR.modify_audio(
+                        file_path=str(temp_audio),
+                        output_path=str(temp_audio),
+                        noise_level=0.02,
+                        volume_gain=0.8,
+                    )
+
+                    # 生成输出视频路径
+                    output_video = output_dir / f"modified_video_{int(time.time())}.mp4"
+
+                    # 替换视频音频
+                    WX_ASR.modify_video_audio(
+                        file_path, str(temp_audio), str(output_video)
+                    )
+
+                    self.status_var.set("[√] 视频处理成功")
+                    self.input_path_var.set(str(output_video))
+
+                except Exception as e:
+                    messagebox.showerror("错误", f"处理视频失败: {str(e)}")
+                    return
+
+        self.input_path_var.set(file_path)
 
     def process_audio(self):
         try:

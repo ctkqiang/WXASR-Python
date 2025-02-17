@@ -5,9 +5,9 @@ import whisper
 import librosa
 import numpy as np
 import soundfile as sf
+import jieba
 from pathlib import Path
 import speech_recognition as sr
-from funasr import AutoModel
 from typing import Optional, Union, Tuple
 from deprecated import deprecated
 
@@ -15,19 +15,68 @@ isTesting: bool = True
 
 
 class WX_ASR:
+    # 版本信息
+    VERSION = "1.0.0"
+    DEVELOPER = "钟智强"
+    DEVELOPER_EMAIL = "johnmelodymel@qq.com"
+
     def __init__(self) -> None:
         self.language: str = "zh"
-        self.funasr_model: str = (
-            "damo/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
-        )
         self.recognizer: sr.Recognizer = sr.Recognizer()
-        """
-        模型选择：Whisper提供多种模型（base基础型、small、medium、large）。
-        较大的模型提供更高的准确性，但需要更多的计算资源。
-        """
         self.model: whisper.Whisper = whisper.load_model("base")
 
     @staticmethod
+    def get_info() -> dict:
+        """
+        获取软件信息
+        """
+        return {
+            "版本": WX_ASR.VERSION,
+            "开发者": WX_ASR.DEVELOPER,
+            "联系方式": WX_ASR.DEVELOPER_EMAIL,
+            "语言支持": "中文",
+            "功能": ["音频处理与变声", "语音识别转写", "文本相似度分析", "重复率计算"],
+        }
+
+    def __init__(self) -> None:
+        self.language: str = "zh"
+        self.recognizer: sr.Recognizer = sr.Recognizer()
+        self.model: whisper.Whisper = whisper.load_model("base")
+
+    @staticmethod
+    def modify_video_audio(
+        input_video: str, modified_audio: str, output_video: str
+    ) -> None:
+        """
+        将修改后的音频替换视频中的原始音频
+        """
+        try:
+            import moviepy.editor as mp
+
+            # 加载视频和修改后的音频
+            video = mp.VideoFileClip(input_video)
+            new_audio = mp.AudioFileClip(modified_audio)
+
+            # 替换音频
+            final_video = video.set_audio(new_audio)
+
+            # 保存新视频（保持原视频编码设置）
+            final_video.write_videofile(
+                output_video,
+                codec="libx264",
+                audio_codec="aac",
+                temp_audiofile="temp-audio.m4a",
+                remove_temp=True,
+            )
+
+            # 清理资源
+            video.close()
+            new_audio.close()
+            final_video.close()
+
+        except Exception as e:
+            raise ValueError(f"[x] 替换视频音频时出错：{str(e)}")
+
     def modify_audio(
         file_path: str,
         output_path: str,
@@ -38,33 +87,53 @@ class WX_ASR:
             if not os.path.exists(file_path):
                 raise FileNotFoundError(f"[x] 未找到音频文件：{file_path}")
 
+            # 加载音频文件
             audio, sr = librosa.load(file_path, sr=None)
 
-            # 添加高频噪声 (超出人耳范围但影响ASR)
-            t = np.linspace(0, len(audio) / sr, len(audio))
-            high_freq_noise = np.sin(2 * np.pi * 18000 * t) * 0.1
-            audio = audio + high_freq_noise
+            # 时域变换处理
+            segments = np.array_split(audio, 40)  # 分段处理
+            modified_segments = []
 
-            # 添加微小时间偏移
-            shift_samples = int(sr * 0.001)  # 1ms shift
-            audio = np.roll(audio, shift_samples)
+            for segment in segments:
+                # 时间拉伸
+                stretch_factor = np.random.uniform(0.97, 1.03)
+                stretched = librosa.effects.time_stretch(segment, rate=stretch_factor)
 
-            # 应用音量增益
-            audio = audio * volume_gain
+                # 音高偏移
+                pitch_shift = np.random.uniform(-1.5, 1.5)
+                shifted = librosa.effects.pitch_shift(
+                    stretched, sr=sr, n_steps=pitch_shift
+                )
 
-            # 添加选择性频率调制
-            mod_freq = 50  # 50Hz modulation
-            modulation = 1 + 0.1 * np.sin(2 * np.pi * mod_freq * t)
-            audio = audio * modulation
+                modified_segments.append(shifted)
 
-            # 限制在有效范围内
+            # 重组音频
+            audio = np.concatenate([seg for seg in modified_segments if len(seg) > 0])
+
+            # 音量调整
+            audio = audio * 0.85  # 固定音量增益
+
+            # 添加白噪声
+            white_noise = np.random.normal(0, 0.02, len(audio))
+            audio = audio + white_noise
+
+            # 标准化音频
             modified_audio = np.clip(audio, -1.0, 1.0)
+            modified_audio = modified_audio / np.max(np.abs(modified_audio))
 
             # 保存修改后的音频
             sf.write(output_path, modified_audio, sr)
 
-            return modified_audio, sr
+            # 复制成功的音频到输出目录
+            if "temp_audio_1739713328.wav" in str(output_path):
+                success_path = (
+                    Path(output_path).parent.parent
+                    / "output"
+                    / "successful_modification.wav"
+                )
+                sf.write(str(success_path), modified_audio, sr)
 
+            return modified_audio, sr
         except Exception as e:
             raise ValueError(f"[x] 处理音频文件时出错：{str(e)}")
 
@@ -173,12 +242,60 @@ class WX_ASR:
             original_repetition = self.calculate_repetition_rate(original_text)
             test_repetition = self.calculate_repetition_rate(test_text)
 
+            # 改进相似度计算方法
+            def calculate_semantic_similarity(text1: str, text2: str) -> tuple:
+                # 分词处理
+                words1 = list(jieba.cut(text1))
+                words2 = list(jieba.cut(text2))
+
+                # 计算词语级别的相似度
+                word_similarity = len(set(words1) & set(words2)) / len(
+                    set(words1) | set(words2)
+                )
+
+                # 计算句子级别的相似度
+                sentences1 = text1.split("。")
+                sentences2 = text2.split("。")
+                sentence_pairs = []
+                for s1 in sentences1:
+                    if s1.strip():
+                        max_sim = max(
+                            (
+                                len(set(s1) & set(s2)) / len(set(s1) | set(s2))
+                                if s2.strip()
+                                else 0
+                            )
+                            for s2 in sentences2
+                        )
+                        sentence_pairs.append(max_sim)
+
+                sentence_similarity = (
+                    sum(sentence_pairs) / len(sentence_pairs) if sentence_pairs else 0
+                )
+
+                # 综合计算（词语相似度占40%，句子相似度占60%）
+                final_similarity = word_similarity * 0.4 + sentence_similarity * 0.6
+                return (
+                    final_similarity * 100,
+                    word_similarity * 100,
+                    sentence_similarity * 100,
+                )
+
+            # 计算改进后的相似度
+            similarity, word_sim, sent_sim = calculate_semantic_similarity(
+                original_text, test_text
+            )
+
             return {
                 "比较结果": {
                     "相似度分析": {
                         "百分比": f"{similarity:.2f}%",
                         "相同字符数": same_chars,
                         "总字符数": total_chars,
+                        "语义分析": {
+                            "词语相似度": f"{word_sim:.2f}%",
+                            "句子相似度": f"{sent_sim:.2f}%",
+                        },
                     },
                     "文本统计": {
                         "原始文本长度": len(original_text),
@@ -208,11 +325,13 @@ class WX_ASR:
         comparison = result["比较结果"]
         print("\n=== 文本比较分析报告 ===")
         print("\n【相似度分析】")
-        print(f"├─ 相似度: {comparison['相似度分析']['百分比']}")
-        print(f"├─ 相同字符: {comparison['相似度分析']['相同字符数']}")
-        print(
-            f"└─ 总字符数: {comparison['相似度分析']['总字符数']}"
-        )  # Fixed: removed extra 's'
+        print("├─ 字符级相似度:")
+        print(f"│  ├─ 相同字符: {comparison['相似度分析']['相同字符数']}")
+        print(f"│  └─ 总字符数: {comparison['相似度分析']['总字符数']}")
+        print("├─ 语义相似度分析:")
+        print(f"│  ├─ 词语相似度: {comparison['相似度分析']['语义分析']['词语相似度']}")
+        print(f"│  └─ 句子相似度: {comparison['相似度分析']['语义分析']['句子相似度']}")
+        print(f"└─ 综合相似度: {comparison['相似度分析']['百分比']}")
 
         print("\n【文本统计】")
         print(f"├─ 原始长度: {comparison['文本统计']['原始文本长度']}")
@@ -220,8 +339,8 @@ class WX_ASR:
         print(f"└─ 长度差异: {comparison['文本统计']['长度差异']}")
 
         print("\n【文本内容】")
-        print(f"├─ 原始文本: {comparison['文本内容']['原始文本']}")
-        print(f"└─ 测试文本: {comparison['文本内容']['测试文本']}")
+        print(f"├─ 原始文本: {comparison['文本内容']['原始文本']}\n")
+        print(f"└─ 测试文本: {comparison['文本内容']['测试文本']}\n")
         print("\n【重复率分析】")
         print("├─ 原始文本:")
         print(f"│  ├─ 重复率: {comparison['重复率分析']['原始文本']['重复率']}")
@@ -265,18 +384,22 @@ if __name__ == "__main__":
     if isTesting:
         try:
             ROOT_DIR = Path(__file__).parent.parent
-            test_audio = ROOT_DIR / "media" / "test_data" / "test.wav"
+            test_audio = (
+                ROOT_DIR
+                / "media"
+                / "test_data"
+                / "2月15🌐编程设计32 2025-02-02 下午8.19.47.mp4"
+            )
 
             wx = WX_ASR()
 
             # 测试[1]：测试音频修改功能
             print("\n=== 音频修改测试 ===")
             try:
-                # Create output directory if it doesn't exist
                 output_dir = ROOT_DIR / "media" / "output"
                 output_dir.mkdir(parents=True, exist_ok=True)
 
-                modified_audio_path = output_dir / f"modified_audio_20250216_170115.wav"
+                modified_audio_path = output_dir / f"modified_audio.wav"
                 modified_audio, sr = wx.modify_audio(
                     file_path=str(test_audio),
                     output_path=str(modified_audio_path),
@@ -350,6 +473,12 @@ if __name__ == "__main__":
                     )
                 )
                 print("=====================\n")
+
+                o = wx.ASR_Tester(
+                    file_path=output_dir / "modified_audio_20250216_212736.wav"
+                )
+
+                print(f"[v] {o}")
             except Exception as e:
                 print(f"[x] {e}")
         except Exception as e:
